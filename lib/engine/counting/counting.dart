@@ -2,5 +2,6 @@
 library;
 
 export 'card_counter.dart';
+export 'count_trainer.dart';
 export 'counting_system.dart';
 export 'hi_lo.dart';

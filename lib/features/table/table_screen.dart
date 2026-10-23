@@ -24,12 +24,17 @@ class TableScreen extends ConsumerWidget {
         backgroundColor: const Color(0xFF094F2B),
         foregroundColor: Colors.white,
         actions: [
+          // En modo prueba el conteo siempre va oculto: el botón se desactiva.
           IconButton(
-            tooltip: state.showCount ? 'Ocultar conteo' : 'Mostrar conteo',
+            tooltip: state.trainingMode == TrainingMode.test
+                ? 'Oculto en modo prueba'
+                : (state.showCount ? 'Ocultar conteo' : 'Mostrar conteo'),
             icon: Icon(
-              state.showCount ? Icons.visibility : Icons.visibility_off,
+              state.countVisible ? Icons.visibility : Icons.visibility_off,
             ),
-            onPressed: controller.toggleShowCount,
+            onPressed: state.trainingMode == TrainingMode.test
+                ? null
+                : controller.toggleShowCount,
           ),
         ],
       ),
@@ -53,7 +58,13 @@ class TableScreen extends ConsumerWidget {
                           children: [
                             _InfoPanel(state: state),
                             const SizedBox(height: 8),
+                            _ModeSelector(state: state, controller: controller),
+                            const SizedBox(height: 8),
                             _CountPanel(state: state),
+                            if (state.trainingMode == TrainingMode.test) ...[
+                              const SizedBox(height: 8),
+                              _TrainingStats(state: state),
+                            ],
                             const SizedBox(height: 16),
                             _HandArea(
                               title: 'Crupier',
@@ -156,6 +167,70 @@ class _Stat extends StatelessWidget {
   }
 }
 
+/// Selector de modo de entrenamiento: Libre o Prueba (requisito 4).
+class _ModeSelector extends StatelessWidget {
+  const _ModeSelector({required this.state, required this.controller});
+
+  final TableState state;
+  final TableController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return SegmentedButton<TrainingMode>(
+      style: SegmentedButton.styleFrom(
+        foregroundColor: Colors.white70,
+        selectedForegroundColor: Colors.white,
+        selectedBackgroundColor: const Color(0xFF094F2B),
+      ),
+      segments: const [
+        ButtonSegment(
+          value: TrainingMode.free,
+          label: Text('Libre'),
+          icon: Icon(Icons.sports_esports),
+        ),
+        ButtonSegment(
+          value: TrainingMode.test,
+          label: Text('Prueba'),
+          icon: Icon(Icons.psychology),
+        ),
+      ],
+      selected: {state.trainingMode},
+      onSelectionChanged: (s) => controller.setTrainingMode(s.first),
+    );
+  }
+}
+
+/// Estadísticas de precisión del conteo en modo prueba (requisito 8).
+class _TrainingStats extends StatelessWidget {
+  const _TrainingStats({required this.state});
+
+  final TableState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final pct = (state.accuracy * 100).toStringAsFixed(0);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.18),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: [
+          _CountStat(
+            label: 'Aciertos',
+            value: '${state.correct}/${state.checks}',
+          ),
+          _CountStat(label: 'Precisión', value: '$pct%'),
+          _CountStat(label: 'Racha', value: '${state.currentStreak}'),
+          _CountStat(label: 'Mejor', value: '${state.bestStreak}'),
+        ],
+      ),
+    );
+  }
+}
+
 /// Panel del conteo Hi-Lo. Cuando está oculto muestra "•••" para que el jugador
 /// practique mentalmente; el cálculo interno sigue corriendo (requisito 3).
 class _CountPanel extends StatelessWidget {
@@ -165,17 +240,16 @@ class _CountPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final rc = state.showCount ? '${state.runningCount}' : '•••';
-    final tc = state.showCount ? state.trueCount.toStringAsFixed(1) : '•••';
+    final visible = state.countVisible;
+    final rc = visible ? '${state.runningCount}' : '•••';
+    final tc = visible ? state.trueCount.toStringAsFixed(1) : '•••';
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       decoration: BoxDecoration(
         color: Colors.black.withValues(alpha: 0.18),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: state.showCount
-              ? Colors.amber.withValues(alpha: 0.6)
-              : Colors.white12,
+          color: visible ? Colors.amber.withValues(alpha: 0.6) : Colors.white12,
         ),
       ),
       child: Row(
@@ -304,6 +378,10 @@ class _Controls extends StatelessWidget {
       return _BettingControls(state: state, controller: controller);
     }
     if (state.isSettled) {
+      // En modo prueba, antes de seguir el jugador comprueba su conteo.
+      if (state.canCheckCount) {
+        return _CountCheckInput(controller: controller);
+      }
       return SizedBox(
         width: double.infinity,
         child: FilledButton(
@@ -391,6 +469,66 @@ class _BettingControls extends StatelessWidget {
           child: FilledButton(
             onPressed: controller.deal,
             child: Text('Repartir (apuesta ${state.bet})'),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Entrada para que el jugador introduzca su conteo (modo prueba). Permite
+/// ajustar un número con +/− y confirmarlo para comprobar la precisión.
+class _CountCheckInput extends StatefulWidget {
+  const _CountCheckInput({required this.controller});
+
+  final TableController controller;
+
+  @override
+  State<_CountCheckInput> createState() => _CountCheckInputState();
+}
+
+class _CountCheckInputState extends State<_CountCheckInput> {
+  int _guess = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        const Text(
+          '¿Cuál es el conteo corriente?',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            IconButton.filledTonal(
+              onPressed: () => setState(() => _guess--),
+              icon: const Icon(Icons.remove),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Text(
+                '$_guess',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 28,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            IconButton.filledTonal(
+              onPressed: () => setState(() => _guess++),
+              icon: const Icon(Icons.add),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton(
+            onPressed: () => widget.controller.checkCount(_guess),
+            child: const Text('Comprobar conteo'),
           ),
         ),
       ],

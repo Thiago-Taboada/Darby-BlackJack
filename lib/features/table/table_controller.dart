@@ -7,6 +7,16 @@ import '../../engine/game/game.dart';
 import '../../engine/rules/rules.dart';
 import '../../engine/shoe/shoe.dart';
 
+/// Modo de entrenamiento de la mesa (requisito 4).
+enum TrainingMode {
+  /// Juego libre: el jugador decide si muestra u oculta el conteo.
+  free,
+
+  /// Modo prueba: el conteo se mantiene oculto y el jugador comprueba su
+  /// cálculo al terminar cada ronda, midiendo su precisión.
+  test,
+}
+
 /// Estado observable de la mesa que consume la UI.
 ///
 /// Expone solo lo que el jugador debe ver. La carta oculta del crupier se
@@ -23,6 +33,13 @@ class TableState {
     required this.runningCount,
     required this.trueCount,
     required this.showCount,
+    required this.trainingMode,
+    required this.checks,
+    required this.correct,
+    required this.accuracy,
+    required this.currentStreak,
+    required this.bestStreak,
+    required this.lastCheck,
   });
 
   final Round? round;
@@ -41,8 +58,23 @@ class TableState {
   /// Conteo verdadero real (siempre calculado, se muestre o no).
   final double trueCount;
 
-  /// Si la UI debe mostrar el conteo. Ocultarlo NO altera los cálculos.
+  /// Preferencia del jugador de mostrar el conteo. En modo prueba se ignora
+  /// (el conteo permanece oculto). Ocultarlo NO altera los cálculos.
   final bool showCount;
+
+  /// Modo de entrenamiento activo.
+  final TrainingMode trainingMode;
+
+  /// Estadísticas de precisión del conteo (modo prueba).
+  final int checks;
+  final int correct;
+  final double accuracy;
+  final int currentStreak;
+  final int bestStreak;
+
+  /// Resultado de la última comprobación de conteo, o null si no hay ninguna
+  /// pendiente de mostrar.
+  final CountCheck? lastCheck;
 
   RoundPhase get phase => round?.phase ?? RoundPhase.betting;
 
@@ -52,6 +84,14 @@ class TableState {
 
   /// Si la carta oculta del crupier debe ocultarse en la UI.
   bool get hideDealerHoleCard => round?.dealerHoleCardHidden ?? true;
+
+  /// Visibilidad efectiva del conteo: en modo prueba siempre oculto.
+  bool get countVisible => trainingMode == TrainingMode.free && showCount;
+
+  /// Si procede pedir al jugador su conteo (modo prueba, ronda resuelta y aún
+  /// no comprobada).
+  bool get canCheckCount =>
+      trainingMode == TrainingMode.test && isSettled && lastCheck == null;
 
   TableState copyWith({
     Round? round,
@@ -64,6 +104,14 @@ class TableState {
     int? runningCount,
     double? trueCount,
     bool? showCount,
+    TrainingMode? trainingMode,
+    int? checks,
+    int? correct,
+    double? accuracy,
+    int? currentStreak,
+    int? bestStreak,
+    CountCheck? lastCheck,
+    bool clearLastCheck = false,
   }) {
     return TableState(
       round: round ?? this.round,
@@ -76,6 +124,13 @@ class TableState {
       runningCount: runningCount ?? this.runningCount,
       trueCount: trueCount ?? this.trueCount,
       showCount: showCount ?? this.showCount,
+      trainingMode: trainingMode ?? this.trainingMode,
+      checks: checks ?? this.checks,
+      correct: correct ?? this.correct,
+      accuracy: accuracy ?? this.accuracy,
+      currentStreak: currentStreak ?? this.currentStreak,
+      bestStreak: bestStreak ?? this.bestStreak,
+      lastCheck: clearLastCheck ? null : (lastCheck ?? this.lastCheck),
     );
   }
 }
@@ -93,12 +148,14 @@ class TableController extends Notifier<TableState> {
   );
 
   final CardCounter _counter = CardCounter(const HiLo());
+  final CountTrainer _trainer = CountTrainer();
 
   /// Cuántas cartas del jugador y del crupier ya se han pasado al contador en la
   /// ronda actual. Garantiza que cada carta visible se cuenta una sola vez.
   int _observedPlayerCards = 0;
   int _observedDealerCards = 0;
   bool _showCount = false;
+  TrainingMode _trainingMode = TrainingMode.free;
 
   @override
   TableState build() {
@@ -118,16 +175,61 @@ class TableController extends Notifier<TableState> {
       runningCount: 0,
       trueCount: 0,
       showCount: _showCount,
+      trainingMode: _trainingMode,
+      checks: 0,
+      correct: 0,
+      accuracy: 0,
+      currentStreak: 0,
+      bestStreak: 0,
+      lastCheck: null,
     );
   }
 
   TableRules get rules => _rules;
 
   /// Alterna mostrar/ocultar el conteo en la UI. NO toca el conteo interno:
-  /// solo cambia la visibilidad (requisito 3).
+  /// solo cambia la visibilidad (requisito 3). En modo prueba no tiene efecto
+  /// visible (el conteo permanece oculto).
   void toggleShowCount() {
     _showCount = !_showCount;
     state = state.copyWith(showCount: _showCount);
+  }
+
+  /// Cambia el modo de entrenamiento. Al pasar a modo prueba se reinician las
+  /// estadísticas de precisión para medir la sesión desde cero.
+  void setTrainingMode(TrainingMode mode) {
+    _trainingMode = mode;
+    if (mode == TrainingMode.test) {
+      _trainer.reset();
+    }
+    state = state.copyWith(
+      trainingMode: mode,
+      checks: _trainer.checks,
+      correct: _trainer.correct,
+      accuracy: _trainer.accuracy,
+      currentStreak: _trainer.currentStreak,
+      bestStreak: _trainer.bestStreak,
+      clearLastCheck: true,
+    );
+  }
+
+  /// Comprueba el conteo que cree el jugador contra el running count real
+  /// (modo prueba). Actualiza las estadísticas de precisión y deja el resultado
+  /// en `lastCheck` para que la UI dé feedback.
+  void checkCount(int guess) {
+    if (!state.canCheckCount) return;
+    final result = _trainer.check(guess: guess, actual: _counter.runningCount);
+    state = state.copyWith(
+      checks: _trainer.checks,
+      correct: _trainer.correct,
+      accuracy: _trainer.accuracy,
+      currentStreak: _trainer.currentStreak,
+      bestStreak: _trainer.bestStreak,
+      lastCheck: result,
+      message: result.wasCorrect
+          ? '¡Correcto! El conteo era ${result.actual}.'
+          : 'Casi: dijiste ${result.guess}, era ${result.actual}.',
+    );
   }
 
   /// Observa las cartas visibles nuevas de la ronda y actualiza el contador.
@@ -185,6 +287,8 @@ class TableController extends Notifier<TableState> {
     _reshuffleIfNeeded();
     _observedPlayerCards = 0;
     _observedDealerCards = 0;
+    // Limpia el feedback de la comprobación anterior al empezar una ronda nueva.
+    state = state.copyWith(clearLastCheck: true);
     final round = Round(shoe: _shoe, rules: _rules);
     round.placeBetAndDeal(state.bet);
     _syncAfterAction(round);
@@ -233,6 +337,13 @@ class TableController extends Notifier<TableState> {
       runningCount: _counter.runningCount,
       trueCount: _counter.trueCount(_shoe.decksRemaining),
       showCount: _showCount,
+      trainingMode: _trainingMode,
+      checks: _trainer.checks,
+      correct: _trainer.correct,
+      accuracy: _trainer.accuracy,
+      currentStreak: _trainer.currentStreak,
+      bestStreak: _trainer.bestStreak,
+      lastCheck: null,
     );
   }
 
