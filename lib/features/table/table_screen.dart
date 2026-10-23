@@ -1,0 +1,284 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../engine/cards/cards.dart';
+import '../../engine/game/game.dart';
+import 'table_controller.dart';
+import 'widgets/card_widget.dart';
+
+/// Pantalla principal de la mesa de Blackjack. Mobile first: una columna que se
+/// adapta al ancho disponible. Permite jugar una mano completa contra el crupier.
+class TableScreen extends ConsumerWidget {
+  const TableScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final state = ref.watch(tableControllerProvider);
+    final controller = ref.read(tableControllerProvider.notifier);
+    final round = state.round;
+
+    return Scaffold(
+      backgroundColor: const Color(0xFF0B6B3A),
+      appBar: AppBar(
+        title: const Text('Darby Blackjack'),
+        backgroundColor: const Color(0xFF094F2B),
+        foregroundColor: Colors.white,
+      ),
+      body: SafeArea(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  _InfoPanel(state: state),
+                  const SizedBox(height: 16),
+                  _HandArea(
+                    title: 'Crupier',
+                    cards: round?.dealerHand.cards ?? const [],
+                    hideSecondCard: state.hideDealerHoleCard,
+                    total: _dealerVisibleTotal(state),
+                  ),
+                  const Spacer(),
+                  _Message(message: state.message),
+                  const Spacer(),
+                  _HandArea(
+                    title: 'Tú',
+                    cards: round?.playerHand.cards ?? const [],
+                    hideSecondCard: false,
+                    total: round?.playerHand.cards.isEmpty ?? true
+                        ? null
+                        : round!.playerHand.total,
+                  ),
+                  const SizedBox(height: 16),
+                  _Controls(state: state, controller: controller),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Total visible del crupier: durante el turno del jugador solo cuenta la
+  /// carta descubierta; después, el total real.
+  int? _dealerVisibleTotal(TableState state) {
+    final round = state.round;
+    if (round == null || round.dealerHand.cards.isEmpty) return null;
+    if (state.hideDealerHoleCard) {
+      return round.dealerHand.cards.first.blackjackValue;
+    }
+    return round.dealerHand.total;
+  }
+}
+
+class _InfoPanel extends StatelessWidget {
+  const _InfoPanel({required this.state});
+
+  final TableState state;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.25),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          _Stat(label: 'Saldo', value: '${state.balance}'),
+          _Stat(label: 'Apuesta', value: '${state.bet}'),
+          _Stat(label: 'Cartas', value: '${state.cardsRemaining}'),
+          _Stat(label: 'Barajas', value: state.decksRemaining.toStringAsFixed(1)),
+        ],
+      ),
+    );
+  }
+}
+
+class _Stat extends StatelessWidget {
+  const _Stat({required this.label, required this.value});
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Text(label, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+        const SizedBox(height: 2),
+        Text(value,
+            style: const TextStyle(
+                color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+      ],
+    );
+  }
+}
+
+class _HandArea extends StatelessWidget {
+  const _HandArea({
+    required this.title,
+    required this.cards,
+    required this.hideSecondCard,
+    required this.total,
+  });
+
+  final String title;
+  final List<PlayingCard> cards;
+  final bool hideSecondCard;
+  final int? total;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Text(
+          total == null ? title : '$title — $total',
+          style: const TextStyle(
+              color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          height: 92,
+          child: cards.isEmpty
+              ? const Center(
+                  child: Text('—', style: TextStyle(color: Colors.white38)))
+              : Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    for (var i = 0; i < cards.length; i++)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 3),
+                        child: CardWidget(
+                          card: cards[i],
+                          faceDown: hideSecondCard && i == 1,
+                        ),
+                      ),
+                  ],
+                ),
+        ),
+      ],
+    );
+  }
+}
+
+class _Message extends StatelessWidget {
+  const _Message({required this.message});
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      message,
+      textAlign: TextAlign.center,
+      style: const TextStyle(
+          color: Colors.white, fontSize: 16, fontWeight: FontWeight.w500),
+    );
+  }
+}
+
+class _Controls extends StatelessWidget {
+  const _Controls({required this.state, required this.controller});
+
+  final TableState state;
+  final TableController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    if (state.isBetting) {
+      return _BettingControls(state: state, controller: controller);
+    }
+    if (state.isSettled) {
+      return SizedBox(
+        width: double.infinity,
+        child: FilledButton(
+          onPressed: controller.nextRound,
+          child: const Text('Siguiente mano'),
+        ),
+      );
+    }
+    // Turno del jugador.
+    final actions = state.round?.availableActions ?? const <PlayerAction>{};
+    return Row(
+      children: [
+        Expanded(
+          child: FilledButton(
+            onPressed: actions.contains(PlayerAction.hit) ? controller.hit : null,
+            child: const Text('Pedir'),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: FilledButton(
+            onPressed: actions.contains(PlayerAction.stand) ? controller.stand : null,
+            child: const Text('Plantarse'),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: FilledButton(
+            onPressed: actions.contains(PlayerAction.doubleDown)
+                ? controller.doubleDown
+                : null,
+            child: const Text('Doblar'),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _BettingControls extends StatelessWidget {
+  const _BettingControls({required this.state, required this.controller});
+
+  final TableState state;
+  final TableController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            for (final chip in const [5, 25, 100])
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    side: const BorderSide(color: Colors.white54),
+                  ),
+                  onPressed: () => controller.setBet(state.bet + chip),
+                  child: Text('+$chip'),
+                ),
+              ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: OutlinedButton(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.white,
+                  side: const BorderSide(color: Colors.white54),
+                ),
+                onPressed: () => controller.setBet(controller.rules.minBet),
+                child: const Text('Reset'),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton(
+            onPressed: controller.deal,
+            child: Text('Repartir (apuesta ${state.bet})'),
+          ),
+        ),
+      ],
+    );
+  }
+}

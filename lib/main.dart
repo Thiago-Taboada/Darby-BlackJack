@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'features/table/table_screen.dart';
+
 void main() {
   runApp(const ProviderScope(child: DarbyBlackjackApp()));
 }
@@ -20,29 +22,7 @@ class DarbyBlackjackApp extends StatelessWidget {
         ),
         useMaterial3: true,
       ),
-      home: const _PlaceholderHome(),
-    );
-  }
-}
-
-class _PlaceholderHome extends StatelessWidget {
-  const _PlaceholderHome();
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.style, size: 64, color: Theme.of(context).colorScheme.primary),
-            const SizedBox(height: 16),
-            Text('Darby Blackjack', style: Theme.of(context).textTheme.headlineMedium),
-            const SizedBox(height: 8),
-            const Text('Etapa 1 — Fundamentos del juego'),
-          ],
-        ),
-      ),
+      home: const TableScreen(),
     );
   }
 }

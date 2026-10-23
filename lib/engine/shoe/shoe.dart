@@ -29,16 +29,32 @@ class Shoe {
   /// [penetration] es la fracción del zapato que se reparte antes de la carta de
   /// corte (p. ej. 0.75 = se juega el 75% y se rebaraja). Debe estar en (0, 1].
   /// [random] permite inyectar un generador sembrado para reproducibilidad.
-  Shoe({
-    required this.deckCount,
-    this.penetration = 0.75,
-    Random? random,
-  })  : assert(allowedDeckCounts.contains(deckCount),
-            'deckCount debe ser uno de $allowedDeckCounts'),
-        assert(penetration > 0 && penetration <= 1,
-            'penetration debe estar en (0, 1]'),
-        _random = random ?? Random() {
+  Shoe({required this.deckCount, this.penetration = 0.75, Random? random})
+    : assert(
+        allowedDeckCounts.contains(deckCount),
+        'deckCount debe ser uno de $allowedDeckCounts',
+      ),
+      assert(
+        penetration > 0 && penetration <= 1,
+        'penetration debe estar en (0, 1]',
+      ),
+      _random = random ?? Random() {
     reshuffle();
+  }
+
+  /// Crea un zapato con un orden de cartas predefinido, para pruebas.
+  ///
+  /// Las cartas se reparten en el orden dado ([scripted.first] sale primero).
+  /// No mezcla y no usa barajas completas: sirve para escribir escenarios de
+  /// juego deterministas en los tests del motor. No usar en producción.
+  Shoe.scripted(List<PlayingCard> scripted)
+    : deckCount = 1,
+      penetration = 1,
+      _random = Random(0) {
+    // _undealt reparte desde el final, así que invertimos para que el primer
+    // elemento de `scripted` sea el primero en salir.
+    _undealt.addAll(scripted.reversed);
+    _cutIndex = scripted.length;
   }
 
   /// Números de barajas admitidos por las reglas de la mesa.
@@ -131,7 +147,9 @@ class Shoe {
   /// rebarajar cuando corresponda ([needsReshuffle]) antes de agotarlo.
   PlayingCard deal() {
     if (_undealt.isEmpty) {
-      throw StateError('El zapato está vacío; hay que rebarajar antes de repartir.');
+      throw StateError(
+        'El zapato está vacío; hay que rebarajar antes de repartir.',
+      );
     }
     final card = _undealt.removeLast();
     _dealt.add(card);
