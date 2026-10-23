@@ -36,6 +36,11 @@ class TableScreen extends ConsumerWidget {
                 ? null
                 : controller.toggleShowCount,
           ),
+          IconButton(
+            tooltip: 'Cerrar sesión',
+            icon: const Icon(Icons.logout),
+            onPressed: controller.signOut,
+          ),
         ],
       ),
       body: SafeArea(

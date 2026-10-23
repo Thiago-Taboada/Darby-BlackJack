@@ -11,7 +11,8 @@ Construido con **Flutter** (mobile first) y **Firebase** (plan gratuito Spark).
 - `requisitos.md` — requisitos originales e ideas del proyecto.
 - `PLAN.md` — plan de implementación, arquitectura y etapas de desarrollo.
 - `.kiro/steering/project-rules.md` — reglas permanentes del proyecto.
-- `.kiro/steering/project-map.md` — índice vivo de la documentación por área.
+- `.kiro/steering/project-map.md` — índice vivo de la documentación por área
+  (apunta a un documento por cada parte del código).
 
 ## Arquitectura (resumen)
 El núcleo del juego es **Dart puro** (sin Flutter ni Firebase), para poder
@@ -25,15 +26,18 @@ lib/
     shoe/        # Shoe multi-baraja, mezcla, corte, cartas restantes
     rules/       # Reglas configurables de mesa (S17/H17, DAS, pagos...)
     game/        # Flujo de la mano, acciones, resolución, pagos
-    counting/    # Sistemas de conteo (Hi-Lo), running/true count
-    strategy/    # Tabla de estrategia básica
-    probability/ # Probabilidades desde la composición real del shoe
-  data/          # Firebase: repositorios, DTOs, mapeo Firestore
+    counting/    # Sistemas de conteo (Hi-Lo), running/true count, entrenador
+    strategy/    # Tabla de estrategia básica (pendiente)
+    probability/ # Probabilidades desde la composición real del shoe (pendiente)
+  data/          # Firebase: auth y repositorios de Firestore
   features/      # UI por feature (Riverpod + widgets)
-    auth/ table/ betting/ training/ stats/ settings/
+    auth/        # Login, registro y recuperación de contraseña
+    table/       # Mesa de juego, conteo y modos de entrenamiento
+    betting/ training/ stats/ settings/   # (pendientes)
   shared/        # Tema, widgets comunes, utilidades
 test/
   engine/        # Tests del motor (prioridad máxima)
+  features/      # Tests del controlador de la mesa
 ```
 
 ## Stack
@@ -47,15 +51,40 @@ test/
 ## Puesta en marcha
 ```bash
 flutter pub get
-flutter run            # ejecutar la app
-flutter test           # correr tests (incluye los del motor)
-dart run build_runner build --delete-conflicting-outputs   # generar código freezed/json
+flutter run -d chrome   # ejecutar en el navegador (validar móvil con DevTools)
+flutter test            # correr tests (incluye los del motor)
+flutter build web       # compilar la versión web
 ```
 
-> **Firebase aún no está conectado.** Se configurará en la Etapa 4 con
-> `flutterfire configure`, que genera `lib/firebase_options.dart` (ignorado por
-> git). El proyecto usa solo servicios del plan gratuito: Auth, Firestore y
-> Hosting. No se usan Cloud Functions (requieren plan de pago).
+Para validar el diseño mobile first en web: abrir DevTools (F12) y activar el
+modo responsive (Ctrl+Shift+M) para reducir la ventana a tamaño de móvil. No hace
+falta emulador de Android para el desarrollo diario.
+
+## Firebase
+El proyecto usa solo servicios del plan gratuito (Spark): **Auth** (email/
+contraseña + recuperación) y **Cloud Firestore**. No usa Cloud Functions (serían
+plan de pago): el motor del juego vive en el cliente.
+
+- La configuración de tu proyecto (`lib/firebase_options.dart`, `google-services.json`,
+  `GoogleService-Info.plist`) la genera `flutterfire configure` y está en
+  `.gitignore`: cada quien conecta su propio proyecto Firebase.
+- Reglas de seguridad de Firestore en `firestore.rules` (cada usuario solo
+  accede a su propio documento `users/{uid}`). Desplegarlas con:
+
+```bash
+firebase deploy --only firestore:rules
+```
 
 ## Estado del desarrollo
-Ver etapas y checklist en `PLAN.md`. Etapa actual: **1 — Fundamentos del juego**.
+Ver etapas y checklist en `PLAN.md`. Hecho hasta ahora:
+
+- **Motor completo**: cartas, shoe multi-baraja sin reemplazo con carta de corte,
+  reglas de mesa, flujo de la mano (Hit/Stand/Double/Surrender) y pagos.
+- **Conteo Hi-Lo**: running count, true count y entrenador de precisión.
+- **Mesa jugable** (web y Android) con panel de conteo, botón mostrar/ocultar y
+  modos de entrenamiento (Libre / Prueba).
+- **Cuentas y persistencia**: registro/login/recuperación y guardado del saldo,
+  preferencias y estadísticas en Firestore.
+
+Pendiente: split e insurance, historial de manos y gráficas de progreso, modo
+guiado de conteo, y las ampliaciones de etapas posteriores.

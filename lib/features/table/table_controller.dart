@@ -2,6 +2,9 @@ import 'dart:math';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../data/auth_repository.dart';
+import '../../data/models/user_profile.dart';
+import '../../data/profile_repository.dart';
 import '../../engine/counting/counting.dart';
 import '../../engine/game/game.dart';
 import '../../engine/rules/rules.dart';
@@ -157,6 +160,11 @@ class TableController extends Notifier<TableState> {
   bool _showCount = false;
   TrainingMode _trainingMode = TrainingMode.free;
 
+  /// Stats de precisión acumuladas entre sesiones (vienen del perfil guardado).
+  int _lifetimeChecks = 0;
+  int _lifetimeCorrect = 0;
+  int _lifetimeBestStreak = 0;
+
   @override
   TableState build() {
     _shoe = Shoe(
@@ -164,6 +172,9 @@ class TableController extends Notifier<TableState> {
       penetration: _rules.penetration,
       random: Random(),
     );
+    // Carga el perfil guardado en segundo plano; cuando llega, aplica el saldo
+    // y las preferencias. No bloquea el arranque de la mesa.
+    _loadProfile();
     return TableState(
       round: null,
       balance: 1000,
@@ -185,6 +196,63 @@ class TableController extends Notifier<TableState> {
     );
   }
 
+  /// uid del usuario actual, o null si no hay sesión o Firebase no está
+  /// disponible (p. ej. en tests). Defensivo: cualquier fallo se trata como
+  /// "sin sesión", de modo que la persistencia se vuelve un no-op y la mesa
+  /// sigue funcionando en memoria.
+  String? get _uid {
+    try {
+      return ref.read(authRepositoryProvider).currentUser?.uid;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Carga el perfil del usuario (si hay sesión) y aplica saldo y preferencias.
+  Future<void> _loadProfile() async {
+    final uid = _uid;
+    // Sin sesión: se queda con los valores por defecto.
+    if (uid == null) return;
+    try {
+      final profile = await ref
+          .read(profileRepositoryProvider)
+          .loadOrCreate(uid);
+      _showCount = profile.showCount;
+      _lifetimeChecks = profile.totalChecks;
+      _lifetimeCorrect = profile.correctChecks;
+      _lifetimeBestStreak = profile.bestStreak;
+      state = state.copyWith(
+        balance: profile.balance,
+        showCount: _showCount,
+        bestStreak: _lifetimeBestStreak,
+      );
+    } catch (_) {
+      // Si falla la carga (p. ej. sin red), se sigue con los valores locales.
+    }
+  }
+
+  /// Guarda el estado persistente actual en Firestore (saldo, preferencia de
+  /// conteo y stats de precisión acumuladas). Fire-and-forget: no bloquea la UI.
+  void _persist() {
+    final uid = _uid;
+    if (uid == null) return;
+    final profile = UserProfile(
+      balance: state.balance,
+      showCount: _showCount,
+      totalChecks: _lifetimeChecks,
+      correctChecks: _lifetimeCorrect,
+      bestStreak: _lifetimeBestStreak,
+    );
+    // Ignora errores de red de forma silenciosa; se reintenta en el próximo cambio.
+    ref.read(profileRepositoryProvider).save(uid, profile).ignore();
+  }
+
+  /// Cierra la sesión del usuario.
+  Future<void> signOut() async {
+    _persist();
+    await ref.read(authRepositoryProvider).signOut();
+  }
+
   TableRules get rules => _rules;
 
   /// Alterna mostrar/ocultar el conteo en la UI. NO toca el conteo interno:
@@ -193,6 +261,7 @@ class TableController extends Notifier<TableState> {
   void toggleShowCount() {
     _showCount = !_showCount;
     state = state.copyWith(showCount: _showCount);
+    _persist();
   }
 
   /// Cambia el modo de entrenamiento. Al pasar a modo prueba se reinician las
@@ -219,17 +288,24 @@ class TableController extends Notifier<TableState> {
   void checkCount(int guess) {
     if (!state.canCheckCount) return;
     final result = _trainer.check(guess: guess, actual: _counter.runningCount);
+    // Acumula las stats de precisión en las de por vida (persisten entre sesiones).
+    _lifetimeChecks++;
+    if (result.wasCorrect) _lifetimeCorrect++;
+    if (_trainer.bestStreak > _lifetimeBestStreak) {
+      _lifetimeBestStreak = _trainer.bestStreak;
+    }
     state = state.copyWith(
       checks: _trainer.checks,
       correct: _trainer.correct,
       accuracy: _trainer.accuracy,
       currentStreak: _trainer.currentStreak,
-      bestStreak: _trainer.bestStreak,
+      bestStreak: _lifetimeBestStreak,
       lastCheck: result,
       message: result.wasCorrect
           ? '¡Correcto! El conteo era ${result.actual}.'
           : 'Casi: dijiste ${result.guess}, era ${result.actual}.',
     );
+    _persist();
   }
 
   /// Observa las cartas visibles nuevas de la ronda y actualiza el contador.
@@ -357,7 +433,8 @@ class TableController extends Notifier<TableState> {
   void _syncAfterAction(Round round) {
     var balance = state.balance;
     var message = _messageForPhase(round);
-    if (round.phase == RoundPhase.settled) {
+    final settled = round.phase == RoundPhase.settled;
+    if (settled) {
       balance += round.netChips;
       message = _settledMessage(round);
     }
@@ -372,6 +449,9 @@ class TableController extends Notifier<TableState> {
       runningCount: _counter.runningCount,
       trueCount: _counter.trueCount(_shoe.decksRemaining),
     );
+    // Guarda el saldo actualizado solo al resolver la ronda (una escritura por
+    // mano, para no exceder cuotas del plan gratuito).
+    if (settled) _persist();
   }
 
   String _messageForPhase(Round round) {

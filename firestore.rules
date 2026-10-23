@@ -1,0 +1,27 @@
+rules_version = '2';
+
+// Reglas de seguridad de Firestore para Darby Blackjack.
+//
+// Principio: cada usuario autenticado solo puede leer y escribir su propio
+// documento de perfil en users/{uid}. Nadie puede acceder a los datos de otro
+// usuario, y los usuarios no autenticados no tienen acceso a nada. Esto cumple
+// el requisito 7 (proteger los datos y las cuentas) usando únicamente el plan
+// gratuito.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Perfil de usuario y todo lo que cuelgue de él (sesiones, historial...).
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+
+      match /{document=**} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+    }
+
+    // Todo lo demás queda denegado por defecto.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

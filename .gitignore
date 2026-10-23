@@ -22,7 +22,11 @@ migrate_working_dir/
 # VS Code which you may wish to be included in version control, so this line
 # is commented out by default.
 .vscode/
-.kiro/
+
+# Kiro: se versiona la documentación (steering) para mantenerla viva en el repo;
+# se ignora el resto (hooks locales, caché específica de la máquina).
+.kiro/*
+!.kiro/steering/
 
 # Flutter/Dart/Pub related
 **/doc/api/
