@@ -23,38 +23,64 @@ class TableScreen extends ConsumerWidget {
         title: const Text('Darby Blackjack'),
         backgroundColor: const Color(0xFF094F2B),
         foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            tooltip: state.showCount ? 'Ocultar conteo' : 'Mostrar conteo',
+            icon: Icon(
+              state.showCount ? Icons.visibility : Icons.visibility_off,
+            ),
+            onPressed: controller.toggleShowCount,
+          ),
+        ],
       ),
       body: SafeArea(
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 520),
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                children: [
-                  _InfoPanel(state: state),
-                  const SizedBox(height: 16),
-                  _HandArea(
-                    title: 'Crupier',
-                    cards: round?.dealerHand.cards ?? const [],
-                    hideSecondCard: state.hideDealerHoleCard,
-                    total: _dealerVisibleTotal(state),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                // Scroll si la pantalla es baja (móvil en horizontal, ventanas
+                // pequeñas); usa Spacers para repartir el espacio si hay sitio.
+                return SingleChildScrollView(
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      minHeight: constraints.maxHeight,
+                    ),
+                    child: IntrinsicHeight(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          children: [
+                            _InfoPanel(state: state),
+                            const SizedBox(height: 8),
+                            _CountPanel(state: state),
+                            const SizedBox(height: 16),
+                            _HandArea(
+                              title: 'Crupier',
+                              cards: round?.dealerHand.cards ?? const [],
+                              hideSecondCard: state.hideDealerHoleCard,
+                              total: _dealerVisibleTotal(state),
+                            ),
+                            const Spacer(),
+                            _Message(message: state.message),
+                            const Spacer(),
+                            _HandArea(
+                              title: 'Tú',
+                              cards: round?.playerHand.cards ?? const [],
+                              hideSecondCard: false,
+                              total: round?.playerHand.cards.isEmpty ?? true
+                                  ? null
+                                  : round!.playerHand.total,
+                            ),
+                            const SizedBox(height: 16),
+                            _Controls(state: state, controller: controller),
+                          ],
+                        ),
+                      ),
+                    ),
                   ),
-                  const Spacer(),
-                  _Message(message: state.message),
-                  const Spacer(),
-                  _HandArea(
-                    title: 'Tú',
-                    cards: round?.playerHand.cards ?? const [],
-                    hideSecondCard: false,
-                    total: round?.playerHand.cards.isEmpty ?? true
-                        ? null
-                        : round!.playerHand.total,
-                  ),
-                  const SizedBox(height: 16),
-                  _Controls(state: state, controller: controller),
-                ],
-              ),
+                );
+              },
             ),
           ),
         ),
@@ -93,7 +119,10 @@ class _InfoPanel extends StatelessWidget {
           _Stat(label: 'Saldo', value: '${state.balance}'),
           _Stat(label: 'Apuesta', value: '${state.bet}'),
           _Stat(label: 'Cartas', value: '${state.cardsRemaining}'),
-          _Stat(label: 'Barajas', value: state.decksRemaining.toStringAsFixed(1)),
+          _Stat(
+            label: 'Barajas',
+            value: state.decksRemaining.toStringAsFixed(1),
+          ),
         ],
       ),
     );
@@ -109,11 +138,86 @@ class _Stat extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        Text(label, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+        Text(
+          label,
+          style: const TextStyle(color: Colors.white70, fontSize: 12),
+        ),
         const SizedBox(height: 2),
-        Text(value,
+        Text(
+          value,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Panel del conteo Hi-Lo. Cuando está oculto muestra "•••" para que el jugador
+/// practique mentalmente; el cálculo interno sigue corriendo (requisito 3).
+class _CountPanel extends StatelessWidget {
+  const _CountPanel({required this.state});
+
+  final TableState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final rc = state.showCount ? '${state.runningCount}' : '•••';
+    final tc = state.showCount ? state.trueCount.toStringAsFixed(1) : '•••';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.18),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: state.showCount
+              ? Colors.amber.withValues(alpha: 0.6)
+              : Colors.white12,
+        ),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: [
+          Text(
+            state.countingSystemName,
             style: const TextStyle(
-                color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+              color: Colors.white70,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          _CountStat(label: 'Running', value: rc),
+          _CountStat(label: 'True', value: tc),
+        ],
+      ),
+    );
+  }
+}
+
+class _CountStat extends StatelessWidget {
+  const _CountStat({required this.label, required this.value});
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Text(
+          '$label: ',
+          style: const TextStyle(color: Colors.white70, fontSize: 13),
+        ),
+        Text(
+          value,
+          style: const TextStyle(
+            color: Colors.amber,
+            fontSize: 15,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
       ],
     );
   }
@@ -139,14 +243,18 @@ class _HandArea extends StatelessWidget {
         Text(
           total == null ? title : '$title — $total',
           style: const TextStyle(
-              color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600),
+            color: Colors.white,
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+          ),
         ),
         const SizedBox(height: 8),
         SizedBox(
           height: 92,
           child: cards.isEmpty
               ? const Center(
-                  child: Text('—', style: TextStyle(color: Colors.white38)))
+                  child: Text('—', style: TextStyle(color: Colors.white38)),
+                )
               : Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
@@ -176,7 +284,10 @@ class _Message extends StatelessWidget {
       message,
       textAlign: TextAlign.center,
       style: const TextStyle(
-          color: Colors.white, fontSize: 16, fontWeight: FontWeight.w500),
+        color: Colors.white,
+        fontSize: 16,
+        fontWeight: FontWeight.w500,
+      ),
     );
   }
 }
@@ -207,14 +318,18 @@ class _Controls extends StatelessWidget {
       children: [
         Expanded(
           child: FilledButton(
-            onPressed: actions.contains(PlayerAction.hit) ? controller.hit : null,
+            onPressed: actions.contains(PlayerAction.hit)
+                ? controller.hit
+                : null,
             child: const Text('Pedir'),
           ),
         ),
         const SizedBox(width: 8),
         Expanded(
           child: FilledButton(
-            onPressed: actions.contains(PlayerAction.stand) ? controller.stand : null,
+            onPressed: actions.contains(PlayerAction.stand)
+                ? controller.stand
+                : null,
             child: const Text('Plantarse'),
           ),
         ),

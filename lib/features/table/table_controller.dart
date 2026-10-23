@@ -2,6 +2,7 @@ import 'dart:math';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../engine/counting/counting.dart';
 import '../../engine/game/game.dart';
 import '../../engine/rules/rules.dart';
 import '../../engine/shoe/shoe.dart';
@@ -18,6 +19,10 @@ class TableState {
     required this.cardsRemaining,
     required this.decksRemaining,
     required this.message,
+    required this.countingSystemName,
+    required this.runningCount,
+    required this.trueCount,
+    required this.showCount,
   });
 
   final Round? round;
@@ -26,6 +31,18 @@ class TableState {
   final int cardsRemaining;
   final double decksRemaining;
   final String message;
+
+  /// Nombre del sistema de conteo activo (p. ej. "Hi-Lo").
+  final String countingSystemName;
+
+  /// Conteo corriente real (siempre calculado, se muestre o no).
+  final int runningCount;
+
+  /// Conteo verdadero real (siempre calculado, se muestre o no).
+  final double trueCount;
+
+  /// Si la UI debe mostrar el conteo. Ocultarlo NO altera los cálculos.
+  final bool showCount;
 
   RoundPhase get phase => round?.phase ?? RoundPhase.betting;
 
@@ -43,6 +60,10 @@ class TableState {
     int? cardsRemaining,
     double? decksRemaining,
     String? message,
+    String? countingSystemName,
+    int? runningCount,
+    double? trueCount,
+    bool? showCount,
   }) {
     return TableState(
       round: round ?? this.round,
@@ -51,6 +72,10 @@ class TableState {
       cardsRemaining: cardsRemaining ?? this.cardsRemaining,
       decksRemaining: decksRemaining ?? this.decksRemaining,
       message: message ?? this.message,
+      countingSystemName: countingSystemName ?? this.countingSystemName,
+      runningCount: runningCount ?? this.runningCount,
+      trueCount: trueCount ?? this.trueCount,
+      showCount: showCount ?? this.showCount,
     );
   }
 }
@@ -67,6 +92,14 @@ class TableController extends Notifier<TableState> {
     maxBet: 500,
   );
 
+  final CardCounter _counter = CardCounter(const HiLo());
+
+  /// Cuántas cartas del jugador y del crupier ya se han pasado al contador en la
+  /// ronda actual. Garantiza que cada carta visible se cuenta una sola vez.
+  int _observedPlayerCards = 0;
+  int _observedDealerCards = 0;
+  bool _showCount = false;
+
   @override
   TableState build() {
     _shoe = Shoe(
@@ -81,10 +114,45 @@ class TableController extends Notifier<TableState> {
       cardsRemaining: _shoe.cardsRemaining,
       decksRemaining: _shoe.decksRemaining,
       message: 'Haz tu apuesta y reparte.',
+      countingSystemName: _counter.system.name,
+      runningCount: 0,
+      trueCount: 0,
+      showCount: _showCount,
     );
   }
 
   TableRules get rules => _rules;
+
+  /// Alterna mostrar/ocultar el conteo en la UI. NO toca el conteo interno:
+  /// solo cambia la visibilidad (requisito 3).
+  void toggleShowCount() {
+    _showCount = !_showCount;
+    state = state.copyWith(showCount: _showCount);
+  }
+
+  /// Observa las cartas visibles nuevas de la ronda y actualiza el contador.
+  ///
+  /// Cuenta las cartas del jugador siempre; las del crupier solo cuando dejan de
+  /// estar ocultas (la hole card se cuenta al revelarse, no antes). Cada carta
+  /// se pasa al contador una única vez gracias a los índices observados.
+  void _observeVisibleCards(Round round) {
+    final playerCards = round.playerHand.cards;
+    for (var i = _observedPlayerCards; i < playerCards.length; i++) {
+      _counter.observe(playerCards[i]);
+    }
+    _observedPlayerCards = playerCards.length;
+
+    // Cartas visibles del crupier: todas si la hole card ya no está oculta;
+    // solo la primera (upcard) mientras siga oculta.
+    final dealerCards = round.dealerHand.cards;
+    final visibleDealer = round.dealerHoleCardHidden
+        ? (dealerCards.isEmpty ? 0 : 1)
+        : dealerCards.length;
+    for (var i = _observedDealerCards; i < visibleDealer; i++) {
+      _counter.observe(dealerCards[i]);
+    }
+    _observedDealerCards = visibleDealer;
+  }
 
   /// Ajusta la apuesta antes de repartir, respetando saldo y límites de mesa.
   void setBet(int amount) {
@@ -97,9 +165,13 @@ class TableController extends Notifier<TableState> {
   }
 
   /// Rebaraja el zapato si cruzó la carta de corte en la ronda anterior.
+  ///
+  /// Al rebarajar, el conteo se reinicia (es el ÚNICO momento en que se resetea,
+  /// nunca al ocultar el conteo en la UI).
   void _reshuffleIfNeeded() {
     if (_shoe.needsReshuffle) {
       _shoe.reshuffle();
+      _counter.reset();
     }
   }
 
@@ -111,6 +183,8 @@ class TableController extends Notifier<TableState> {
       return;
     }
     _reshuffleIfNeeded();
+    _observedPlayerCards = 0;
+    _observedDealerCards = 0;
     final round = Round(shoe: _shoe, rules: _rules);
     round.placeBetAndDeal(state.bet);
     _syncAfterAction(round);
@@ -154,6 +228,11 @@ class TableController extends Notifier<TableState> {
       cardsRemaining: _shoe.cardsRemaining,
       decksRemaining: _shoe.decksRemaining,
       message: 'Haz tu apuesta y reparte.',
+      countingSystemName: _counter.system.name,
+      // El conteo se conserva entre rondas; solo se reinicia al rebarajar.
+      runningCount: _counter.runningCount,
+      trueCount: _counter.trueCount(_shoe.decksRemaining),
+      showCount: _showCount,
     );
   }
 
@@ -171,12 +250,16 @@ class TableController extends Notifier<TableState> {
       balance += round.netChips;
       message = _settledMessage(round);
     }
+    // Contar las cartas visibles nuevas (incluida la hole card al revelarse).
+    _observeVisibleCards(round);
     state = state.copyWith(
       round: round,
       balance: balance,
       cardsRemaining: _shoe.cardsRemaining,
       decksRemaining: _shoe.decksRemaining,
       message: message,
+      runningCount: _counter.runningCount,
+      trueCount: _counter.trueCount(_shoe.decksRemaining),
     );
   }
 
